@@ -138,7 +138,8 @@ public class QOSBaoMoi {
 			for (String USER_AGENT : USER_AGENT_LIST.split(";")) {
 				log.info(String.format("Submit stats at %d, %s", timeNow / 1000, USER_AGENT));
 
-				//split exurl by ; to get exurl for loadtime
+//Latency of specific URL
+//split exurl by ; to get exurl for loadtime
 				String[] urlList = ExUrl.split(";");
 				for (String url_ : urlList) {
 					ResponseValue res = loadUrl("http://".concat(url_), USER_AGENT);
@@ -149,7 +150,7 @@ public class QOSBaoMoi {
 							long cpLoad = compareLoad(CompareUrl, USER_AGENT);
 							netfail = cpLoad <= Threshold;
 							if (netfail) {
-								log.info(String.format("Ping result %s %d", CompareUrl, cpLoad));
+								log.info(String.format("Ping result %s %d VS %s %d", CompareUrl, cpLoad, url_, res.loadtime));
 							}
 						}
 						Point wwwPoint = Point.measurement("loadtime")
@@ -174,6 +175,7 @@ public class QOSBaoMoi {
 					Elements img = doc.select("img[src]");
 					Elements js = doc.select("script[src]");
 					Elements css = doc.select("link[href]").select("[type=text/css");
+//IMAGE					
 					Integer count = 0;
 					float average = 0;
 					status_code_map.put("1xx", 0);
@@ -189,7 +191,7 @@ public class QOSBaoMoi {
 								long cpLoad = compareLoad(CompareUrl, USER_AGENT);
 								netfail = cpLoad <= Threshold;
 								if (netfail) {
-									log.info(String.format("Ping result %s %d", CompareUrl, cpLoad));
+									log.info(String.format("Ping result %s %d VS AverageIMG %f", CompareUrl, cpLoad, average / totalImage));
 								}
 							}
 							Point pointAverage = Point.measurement("loadtime")
@@ -223,6 +225,7 @@ public class QOSBaoMoi {
 						} else {
 
 							String img_url = elem.attr("src");
+							boolean netfail = false;
 							//check if img_url is ended with common image extensions: jpg, jpeg, 
 							String ext = getFileExt(img_url);
 							if (Extensions.contains(ext)) {
@@ -246,12 +249,21 @@ public class QOSBaoMoi {
 								if (status_code >= 200 && status_code < 400) {
 									average += loadtime;
 								}
+								//Check netfailed. for each image
+								if (loadtime > Threshold) {
+									long cpLoad = compareLoad(CompareUrl, USER_AGENT);
+									netfail = cpLoad <= Threshold;
+									if (netfail) {
+										log.info(String.format("Ping result %s %d VS %s %d", CompareUrl, cpLoad, img_url, loadtime));
+									}
+								}
 								//insert influxdb
 								Point point = Point.measurement("loadtime")
 										.time(timeNow, TimeUnit.MILLISECONDS)
 										.field("load", loadtime) // bytes/ms (0 if status_code not 2xx)
 										.tag("img", img_url.concat(",").concat(ip))
 										.tag("status_code", status_code.toString())
+										.tag("netfail", netfail ? "true" : "false")
 										.tag("client", Client)
 										.tag("User-Agent", USER_AGENT)
 										.build();
@@ -290,7 +302,7 @@ public class QOSBaoMoi {
 							long cpLoad = compareLoad(CompareUrl, USER_AGENT);
 							netfail = cpLoad <= Threshold;
 							if (netfail) {
-								log.info(String.format("Ping result %s %d", CompareUrl, cpLoad));
+								log.info(String.format("Ping result %s %d VS AverageIMG %f", CompareUrl, cpLoad, average / count));
 							}
 						}
 						Point pointAverage = Point.measurement("loadtime")
@@ -307,7 +319,8 @@ public class QOSBaoMoi {
 							log.error(ex.toString());
 						}
 					}
-					//js files
+//End IMAGE
+//JS files
 					count = 0;
 					average = 0;
 					status_code_map.put("1xx", 0);
@@ -323,7 +336,7 @@ public class QOSBaoMoi {
 								long cpLoad = compareLoad(CompareUrl, USER_AGENT);
 								netfail = cpLoad <= Threshold;
 								if (netfail) {
-									log.info(String.format("Ping result %s %d", CompareUrl, cpLoad));
+									log.info(String.format("Ping result %s %d VS AverageJS %f", CompareUrl, cpLoad, average / totalImage));
 								}
 							}
 							Point pointAverage = Point.measurement("loadtime")
@@ -358,8 +371,9 @@ public class QOSBaoMoi {
 
 							String js_url = elem.attr("src");
 							//check if img_url is ended with common image extensions: jpg, jpeg, 
-							System.out.println(js_url);
+//							System.out.println(js_url);
 							Boolean ret = js_url.startsWith("http");
+							boolean netfail = false;
 							if (!ret) {
 								js_url = "http:".concat(js_url);
 							}
@@ -383,12 +397,21 @@ public class QOSBaoMoi {
 								if (status_code >= 200 && status_code < 400) {
 									average += loadtime;
 								}
+								//Check netfailed. for each js
+								if (loadtime > Threshold) {
+									long cpLoad = compareLoad(CompareUrl, USER_AGENT);
+									netfail = cpLoad <= Threshold;
+									if (netfail) {
+										log.info(String.format("Ping result %s %d VS js_url %s %d", CompareUrl, cpLoad, js_url, loadtime));
+									}
+								}
 								//insert influxdb
 								Point point = Point.measurement("loadtime")
 										.time(timeNow, TimeUnit.MILLISECONDS)
 										.field("load", loadtime) // bytes/ms (0 if status_code not 2xx)
 										.tag("js", js_url.concat(",").concat(ip))
 										.tag("status_code", status_code.toString())
+										.tag("netfail", netfail ? "true" : "false")
 										.tag("client", Client)
 										.tag("User-Agent", USER_AGENT)
 										.build();
@@ -426,13 +449,14 @@ public class QOSBaoMoi {
 							long cpLoad = compareLoad(CompareUrl, USER_AGENT);
 							netfail = cpLoad <= Threshold;
 							if (netfail) {
-								log.info(String.format("Ping result %s %d", CompareUrl, cpLoad));
+								log.info(String.format("Ping result %s %d VS AverageJS %f", CompareUrl, cpLoad, average / count));
 							}
 						}
 						Point pointAverage = Point.measurement("loadtime")
 								.time(timeNow, TimeUnit.MILLISECONDS)
 								.field("load", Math.round(average / count))
 								.tag("client", Client)
+								.tag("netfail", netfail ? "true" : "false")
 								.tag("js", "Average")
 								.tag("User-Agent", USER_AGENT)
 								.build();
@@ -442,7 +466,8 @@ public class QOSBaoMoi {
 							log.error(ex.toString());
 						}
 					}
-					//css files
+//END JS					
+//CSS files
 					count = 0;
 					average = 0;
 					status_code_map.put("1xx", 0);
@@ -458,7 +483,7 @@ public class QOSBaoMoi {
 								long cpLoad = compareLoad(CompareUrl, USER_AGENT);
 								netfail = cpLoad <= Threshold;
 								if (netfail) {
-									log.info(String.format("Ping result %s %d", CompareUrl, cpLoad));
+									log.info(String.format("Ping result %s %d VS Average CSS %f", CompareUrl, cpLoad, average / totalImage));
 								}
 							}
 							Point pointAverage = Point.measurement("loadtime")
@@ -493,6 +518,7 @@ public class QOSBaoMoi {
 							String css_url = elem.attr("href");
 							//check if img_url is ended with common image extensions: jpg, jpeg, 
 							Boolean ret = css_url.startsWith("http:");
+							boolean netfail = false;
 							if (!ret) {
 								css_url = "http:".concat(css_url);
 							}
@@ -516,12 +542,21 @@ public class QOSBaoMoi {
 								if (status_code >= 200 && status_code < 400) {
 									average += loadtime;
 								}
+								//Check netfailed. for each image
+								if (loadtime > Threshold) {
+									long cpLoad = compareLoad(CompareUrl, USER_AGENT);
+									netfail = cpLoad <= Threshold;
+									if (netfail) {
+										log.info(String.format("Ping result %s %d VS css_url %s %d", CompareUrl, cpLoad, css_url, loadtime));
+									}
+								}
 								//insert influxdb
 								Point point = Point.measurement("loadtime")
 										.time(timeNow, TimeUnit.MILLISECONDS)
 										.field("load", loadtime) // bytes/ms (0 if status_code not 2xx)
 										.tag("css", css_url.concat(",").concat(ip))
 										.tag("status_code", status_code.toString())
+										.tag("netfail", netfail ? "true" : "false")
 										.tag("client", Client)
 										.tag("User-Agent", USER_AGENT)
 										.build();
@@ -559,13 +594,14 @@ public class QOSBaoMoi {
 							long cpLoad = compareLoad(CompareUrl, USER_AGENT);
 							netfail = cpLoad <= Threshold;
 							if (netfail) {
-								log.info(String.format("Ping result %s %d", CompareUrl, cpLoad));
+								log.info(String.format("Ping result %s %d VS AverageCSS", CompareUrl, cpLoad, average / count));
 							}
 						}
 						Point pointAverage = Point.measurement("loadtime")
 								.time(timeNow, TimeUnit.MILLISECONDS)
 								.field("load", Math.round(average / count))
 								.tag("client", Client)
+								.tag("netfail", netfail ? "true" : "false")
 								.tag("css", "Average")
 								.tag("User-Agent", USER_AGENT)
 								.build();
@@ -575,6 +611,7 @@ public class QOSBaoMoi {
 							log.error(ex.toString());
 						}
 					}
+//END CSS					
 					try {
 						Thread.sleep(period);                 //1000 milliseconds is one second.
 					} catch (InterruptedException ex) {
