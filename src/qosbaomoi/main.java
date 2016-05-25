@@ -18,8 +18,8 @@ public class main {
 		Properties props = System.getProperties();
 		String configfile = props.getProperty("config") == null ? "" : props.getProperty("config");
 		System.out.printf("Load config file: %s\n", configfile);
-		qos.run(configfile);
-//		qos.run("/home/thanhpv/Workspace/Code/gitrepo/TestQOSBaoMoi/config.properties");
+//		qos.run(configfile);
+		qos.run("/home/thanhpv/Workspace/Code/gitrepo/TestQOSBaoMoi/config.properties");
 //		qos.pingTest("m.news.zing.vn", 10);
 //		qos.compareLoad("http://google.com.vn", "Mozillar/4.0");
 	}

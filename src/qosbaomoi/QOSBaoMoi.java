@@ -27,6 +27,7 @@ import java.io.InputStreamReader;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.apache.commons.logging.*;
+import org.apache.http.client.config.RequestConfig;
 
 /**
  *
@@ -56,6 +57,7 @@ public class QOSBaoMoi {
 	private Log log;
 	private Integer pingReqs;
 	private Integer Threshold;
+	private Integer connTimeout;
 
 	private boolean loadConfigure(String path) {
 		try {
@@ -76,6 +78,7 @@ public class QOSBaoMoi {
 			Extensions = config.getProperty("extensions") == null ? "jpg;jpeg" : config.getProperty("extensions").toString();
 			pingReqs = Integer.parseInt(config.getProperty("pingreq") == null ? "10" : config.getProperty("pingreq").toString());
 			Threshold = Integer.parseInt(config.getProperty("threshold") == null ? "3000" : config.getProperty("threshold").toString());
+			connTimeout = Integer.parseInt(config.getProperty("conntimeout") == null ? "10000" : config.getProperty("conntimeout").toString());
 			System.out.printf("%s %s %s\n", Client, USER_AGENT_LIST, Extensions);
 		} catch (Exception ex) {
 //			System.out.printf("Config file not found %s %s\n", path, ex.toString());
@@ -91,7 +94,16 @@ public class QOSBaoMoi {
 
 	private ResponseValue loadUrl(String url, String User_Agent) {
 		try {
-			CloseableHttpClient client = HttpClients.createDefault();
+			//Custom client
+			RequestConfig reqConfig = RequestConfig.custom()
+//					.setSocketTimeout(5000) //time between 2 consecutive packets
+					.setConnectTimeout(connTimeout) //time till connection is established in milliseconds
+//					.setConnectionRequestTimeout(5000) // time till connection request is accepted in connection manager
+					.build();
+			CloseableHttpClient client = HttpClients.custom()
+					.setDefaultRequestConfig(reqConfig)
+					.build();
+			
 			HttpGet httpGet = new HttpGet(url);
 			httpGet.addHeader("User-Agent", User_Agent);
 
