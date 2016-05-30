@@ -37,8 +37,10 @@ public class QOSBaoMoi {
 
 	class ResponseValue {
 
+		Integer status_code;
 		long loadtime; // ms
 		long content_length; // bytes
+		String conninfo; //IP:port or ConnectionTimeout= ... or ErrorMessage= ...
 	}
 	private String Client;
 	private String USER_AGENT_LIST;
@@ -78,7 +80,7 @@ public class QOSBaoMoi {
 			Extensions = config.getProperty("extensions") == null ? "jpg;jpeg" : config.getProperty("extensions").toString();
 			pingReqs = Integer.parseInt(config.getProperty("pingreq") == null ? "10" : config.getProperty("pingreq").toString());
 			Threshold = Integer.parseInt(config.getProperty("threshold") == null ? "3000" : config.getProperty("threshold").toString());
-			connTimeout = Integer.parseInt(config.getProperty("conntimeout") == null ? "10000" : config.getProperty("conntimeout").toString());
+			connTimeout = Integer.parseInt(config.getProperty("conntimeout") == null ? "15000" : config.getProperty("conntimeout").toString());
 			System.out.printf("%s %s %s\n", Client, USER_AGENT_LIST, Extensions);
 		} catch (Exception ex) {
 //			System.out.printf("Config file not found %s %s\n", path, ex.toString());
@@ -94,30 +96,36 @@ public class QOSBaoMoi {
 
 	private ResponseValue loadUrl(String url, String User_Agent) {
 		try {
-			//Custom client
+			//Custom HttpClient with connection timeout = 10s
 			RequestConfig reqConfig = RequestConfig.custom()
-//					.setSocketTimeout(5000) //time between 2 consecutive packets
+					//					.setSocketTimeout(5000) //time between 2 consecutive packets
 					.setConnectTimeout(connTimeout) //time till connection is established in milliseconds
-//					.setConnectionRequestTimeout(5000) // time till connection request is accepted in connection manager
+					//					.setConnectionRequestTimeout(5000) // time till connection request is accepted in connection manager
 					.build();
-			CloseableHttpClient client = HttpClients.custom()
+			ResponseValue res;
+			try (CloseableHttpClient client = HttpClients.custom()
 					.setDefaultRequestConfig(reqConfig)
-					.build();
-			
-			HttpGet httpGet = new HttpGet(url);
-			httpGet.addHeader("User-Agent", User_Agent);
-
-			long start = System.currentTimeMillis();
-			CloseableHttpResponse response = client.execute(httpGet);
-			long end = System.currentTimeMillis();
-			long loadtime = end - start;
-			ResponseValue res = new ResponseValue();
-			if (response.getFirstHeader("Content-Length") != null) {
-				res.content_length = Integer.parseInt(response.getFirstHeader("Content-Length").getValue());
-			} else {
-				res.content_length = 0;
+					.build()) {
+				HttpGet httpGet = new HttpGet(url);
+				httpGet.addHeader("User-Agent", User_Agent);
+				long start = System.currentTimeMillis();
+				CloseableHttpResponse response = client.execute(httpGet);
+				long end = System.currentTimeMillis();
+				long loadtime = end - start;
+				res = new ResponseValue();
+				if (response.getFirstHeader("Content-Length") != null) {
+					res.content_length = Integer.parseInt(response.getFirstHeader("Content-Length").getValue());
+				} else {
+					res.content_length = 0;
+				}	//Response
+				res.loadtime = loadtime;
+				if (response.getHeaders("conninfo") != null) {
+					res.conninfo = response.getHeaders("conninfo")[0].getValue();
+				} else {
+					res.conninfo = "";
+				}
+				res.status_code = response.getStatusLine().getStatusCode();
 			}
-			res.loadtime = loadtime;
 			return res;
 		} catch (IOException ex) {
 			Logger.getLogger(QOSBaoMoi.class.getName()).log(Level.SEVERE, null, ex);
@@ -134,9 +142,7 @@ public class QOSBaoMoi {
 		}
 		while (true) {
 			long timeNow = System.currentTimeMillis();
-
 			String influxDBUrl = "";
-
 			if (InfluxDBUrl.isEmpty()) {
 				influxDBUrl = "http://".concat(InfluxDBHost).concat(":").concat(InfluxDBPort);
 				System.out.printf("Connect InfluxDB directly : %s:%s\n", InfluxDBHost, InfluxDBPort);
@@ -144,9 +150,9 @@ public class QOSBaoMoi {
 				influxDBUrl = InfluxDBUrl;
 				System.out.printf("Connect InfluxDB via Haproxy : %s\n", InfluxDBUrl);
 			}
-			InfluxDB influxDB = InfluxDBFactory.connect(influxDBUrl, "root", "root");
+			InfluxDB influxDB = InfluxDBFactory.connect(influxDBUrl, DBUser, DBPassword);
 
-			//Get image of http://baomoi.com
+			//Get static of link
 			for (String USER_AGENT : USER_AGENT_LIST.split(";")) {
 				log.info(String.format("Submit stats at %d, %s", timeNow / 1000, USER_AGENT));
 
@@ -155,7 +161,6 @@ public class QOSBaoMoi {
 				String[] urlList = ExUrl.split(";");
 				for (String url_ : urlList) {
 					ResponseValue res = loadUrl("http://".concat(url_), USER_AGENT);
-
 					if (res != null) {
 						Boolean netfail = false;
 						if (res.loadtime > Threshold) {
@@ -171,6 +176,7 @@ public class QOSBaoMoi {
 								.tag("client", Client)
 								.tag("netfail", netfail ? "true" : "false")
 								.tag("img", url_)
+								.tag("status_code", res.status_code.toString())
 								.tag("User-Agent", USER_AGENT)
 								.build();
 						try {
@@ -235,29 +241,20 @@ public class QOSBaoMoi {
 							}
 							break;
 						} else {
-
 							String img_url = elem.attr("src");
 							boolean netfail = false;
 							//check if img_url is ended with common image extensions: jpg, jpeg, 
 							String ext = getFileExt(img_url);
 							if (Extensions.contains(ext)) {
-								CloseableHttpClient client = HttpClients.createDefault();
-								HttpGet httpGet = new HttpGet(img_url);
-								httpGet.addHeader("User-Agent", USER_AGENT);
-
-								long start = System.currentTimeMillis();
-								CloseableHttpResponse response = client.execute(httpGet);
-
+								ResponseValue response = loadUrl(img_url, USER_AGENT);
 								if (response == null) {
-									log.error(String.format("Empty response: %s", img_url));
 									continue;
 								}
-								String conninfo = response.getHeaders("conninfo")[0].getValue();
+								String conninfo = response.conninfo;
 								String ip = conninfo.split("/")[1];
 //								System.out.printf("IMG=========%s\n", response.getHeaders("conninfo")[0].getValue());
-								long end = System.currentTimeMillis();
-								long loadtime = end - start;
-								Integer status_code = response.getStatusLine().getStatusCode();
+								long loadtime = response.loadtime;
+								Integer status_code = response.status_code;
 								if (status_code >= 200 && status_code < 400) {
 									average += loadtime;
 								}
@@ -308,7 +305,7 @@ public class QOSBaoMoi {
 					}
 					//if total loaded less than totalImage config
 
-					if (count < totalImage) {
+					if (count <= totalImage) {
 						Boolean netfail = false;
 						if (average / count > Threshold) {
 							long cpLoad = compareLoad(CompareUrl, USER_AGENT);
@@ -391,21 +388,15 @@ public class QOSBaoMoi {
 							}
 							String ext = getFileExt(js_url);
 							if (Extensions.contains(ext)) {
-								CloseableHttpClient client = HttpClients.createDefault();
-								HttpGet httpGet = new HttpGet(js_url);
-								httpGet.addHeader("User-Agent", USER_AGENT);
-
-								long start = System.currentTimeMillis();
-								CloseableHttpResponse response = client.execute(httpGet);
+								ResponseValue response = loadUrl(js_url, USER_AGENT);
 								if (response == null) {
-									log.error(String.format("Empty response: %s", js_url));
 									continue;
 								}
-								String conninfo = response.getHeaders("conninfo")[0].getValue();
+								String conninfo = response.conninfo;
 								String ip = conninfo.split("/")[1];
-								long end = System.currentTimeMillis();
-								long loadtime = end - start;
-								Integer status_code = response.getStatusLine().getStatusCode();
+//								System.out.printf("IMG=========%s\n", response.getHeaders("conninfo")[0].getValue());
+								long loadtime = response.loadtime;
+								Integer status_code = response.status_code;
 								if (status_code >= 200 && status_code < 400) {
 									average += loadtime;
 								}
@@ -455,7 +446,7 @@ public class QOSBaoMoi {
 						}
 					}
 					//if total loaded less than totalImage config
-					if (count < totalImage) {
+					if (count <= totalImage) {
 						Boolean netfail = false;
 						if (average / count > Threshold) {
 							long cpLoad = compareLoad(CompareUrl, USER_AGENT);
@@ -489,7 +480,7 @@ public class QOSBaoMoi {
 					status_code_map.put("5xx", 0);
 					for (Element elem : css) {
 						//submit average load time + status code if last
-						if (count == totalImage.intValue()) {
+						if (totalImage.intValue() == count) {
 							Boolean netfail = false;
 							if (average / totalImage > Threshold) {
 								long cpLoad = compareLoad(CompareUrl, USER_AGENT);
@@ -536,21 +527,15 @@ public class QOSBaoMoi {
 							}
 							String ext = getFileExt(css_url);
 							if (Extensions.contains(ext)) {
-								CloseableHttpClient client = HttpClients.createDefault();
-								HttpGet httpGet = new HttpGet(css_url);
-								httpGet.addHeader("User-Agent", USER_AGENT);
-
-								long start = System.currentTimeMillis();
-								CloseableHttpResponse response = client.execute(httpGet);
+								ResponseValue response = loadUrl(css_url, USER_AGENT);
 								if (response == null) {
-									log.error(String.format("Empty response: %s", css_url));
 									continue;
 								}
-								String conninfo = response.getHeaders("conninfo")[0].getValue();
+								String conninfo = response.conninfo;
 								String ip = conninfo.split("/")[1];
-								long end = System.currentTimeMillis();
-								long loadtime = end - start;
-								Integer status_code = response.getStatusLine().getStatusCode();
+//								System.out.printf("IMG=========%s\n", response.getHeaders("conninfo")[0].getValue());
+								long loadtime = response.loadtime;
+								Integer status_code = response.status_code;
 								if (status_code >= 200 && status_code < 400) {
 									average += loadtime;
 								}
@@ -600,7 +585,7 @@ public class QOSBaoMoi {
 						}
 					}
 					//if total loaded less than totalImage config
-					if (count < totalImage) {
+					if (count <= totalImage) {
 						Boolean netfail = false;
 						if (average / count > Threshold) {
 							long cpLoad = compareLoad(CompareUrl, USER_AGENT);
@@ -642,7 +627,16 @@ public class QOSBaoMoi {
 	public long compareLoad(String url_, String USER_AGENT) {
 		try {
 			long loadtime;
-			CloseableHttpClient client = HttpClients.createDefault();
+			//Custom HttpClient with connection timeout = 10s
+			RequestConfig reqConfig = RequestConfig.custom()
+					//					.setSocketTimeout(5000) //time between 2 consecutive packets
+					.setConnectTimeout(connTimeout) //time till connection is established in milliseconds
+					//					.setConnectionRequestTimeout(5000) // time till connection request is accepted in connection manager
+					.build();
+			CloseableHttpClient client = HttpClients.custom()
+					.setDefaultRequestConfig(reqConfig)
+					.build();
+
 			HttpGet httpGet = new HttpGet(url_);
 			httpGet.addHeader("User-Agent", USER_AGENT);
 
